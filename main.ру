@@ -1,0 +1,130 @@
+import asyncio
+import os
+import io
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
+from PIL import Image
+
+TOKEN = os.getenv("BOT_TOKEN")
+bot = Bot(token=TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+
+class PhotoState(StatesGroup):
+    first = State()
+    second = State()
+
+@dp.message(CommandStart())
+async def start(message: types.Message):
+    await message.answer("""
+👋 Привет! Я бот для работы с фотографиями.
+
+📌 **Объединение двух фотографий:**  
+- Команда: /merge  
+- Первая фото — основное изображение  
+- Вторая фото — для совмещения  
+
+🎨 **Эффекты:**  
+- /ai_grayscale — черно-белое фото  
+- /ai_flip — перевернуть вертикально  
+- /ai_mirror — зеркальное отражение  
+
+🔄 /reset — начать заново
+""", parse_mode=types.ParseMode.MARKDOWN)
+
+@dp.message(Command("reset"))
+async def reset(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🔄 Начинаем заново. Отправь первую фотографию.")
+    await PhotoState.first.set()
+
+@dp.message(Command("merge"))
+async def merge_start(message: types.Message):
+    await message.answer("Отправь первую фотографию.")
+    await PhotoState.first.set()
+
+@dp.message(PhotoState.first)
+async def receive_first(message: types.Message, state: FSMContext):
+    if not message.photo:
+        return await message.answer("Пожалуйста, отправь фото.")
+    await state.update_data(first_photo=message.photo[-1].file_id)
+    await message.answer("Первая фото получена. Теперь отправь вторую.")
+    await PhotoState.second.set()
+
+@dp.message(PhotoState.second)
+async def receive_second(message: types.Message, state: FSMContext):
+    if not message.photo:
+        return await message.answer("Пожалуйста, отправь фото.")
+    data = await state.get_data()
+    first_id = data["first_photo"]
+    second_id = message.photo[-1].file_id
+
+    await message.answer("🔧 Объединяю фото...")
+    first_bytes = await bot.download(first_id)
+    second_bytes = await bot.download(second_id)
+
+    img1 = Image.open(first_bytes).convert("RGBA")
+    img2 = Image.open(second_bytes).convert("RGBA")
+    img2 = img2.resize(img1.size)
+    blended = Image.blend(img1, img2, alpha=0.5)
+
+    buf = io.BytesIO()
+    buf.name = "merged.png"
+    blended.save(buf, format="PNG")
+    buf.seek(0)
+    await message.answer_photo(buf, caption="✨ Готово!")
+    await state.clear()
+
+async def get_image_from_reply(message: types.Message):
+    if not message.reply_to_message or not message.reply_to_message.photo:
+        await message.answer("Ответь этой командой на фото.")
+        return None
+    file_id = message.reply_to_message.photo[-1].file_id
+    bio = await bot.download(file_id)
+    bio.seek(0)
+    img = Image.open(bio).convert("RGBA")
+    return img
+
+@dp.message(Command("ai_grayscale"))
+async def ai_grayscale(message: types.Message):
+    img = await get_image_from_reply(message)
+    if img is None:
+        return
+    gray = img.convert("L").convert("RGBA")
+    buf = io.BytesIO()
+    buf.name = "gray.png"
+    gray.save(buf, format="PNG")
+    buf.seek(0)
+    await message.answer_photo(buf, caption="🖤 Ч/Б фото готово")
+
+@dp.message(Command("ai_flip"))
+async def ai_flip(message: types.Message):
+    img = await get_image_from_reply(message)
+    if img is None:
+        return
+    flipped = img.transpose(Image.FLIP_TOP_BOTTOM)
+    buf = io.BytesIO()
+    buf.name = "flip.png"
+    flipped.save(buf, format="PNG")
+    buf.seek(0)
+    await message.answer_photo(buf, caption="🔄 Фото перевернуто")
+
+@dp.message(Command("ai_mirror"))
+async def ai_mirror(message: types.Message):
+    img = await get_image_from_reply(message)
+    if img is None:
+        return
+    mirrored = img.transpose(Image.FLIP_LEFT_RIGHT)
+    buf = io.BytesIO()
+    buf.name = "mirror.png"
+    mirrored.save(buf, format="PNG")
+    buf.seek(0)
+    await message.answer_photo(buf, caption="🪞 Фото зеркально")
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
