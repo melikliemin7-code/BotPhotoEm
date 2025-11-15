@@ -1,84 +1,71 @@
+import os
 import logging
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from PIL import Image
 from io import BytesIO
 
-# Вставь сюда свой токен
-TOKEN = 'ВАШ_ТОКЕН_БОТА'
+# Безопасно: токен берётся из переменных окружения (а не хранится в коде)
+TOKEN = os.getenv("TOKEN")
 
-# Логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Словарь для хранения фотографий пользователей
 user_photos = {}
 
-# Команда /start
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
-        "Привет! 😎\nХочешь совместную фотографию с твоей любимой знаменитостью? "
-        "Отправь сначала своё фото, а затем фото знаменитости, и я объединю их!"
+        "Привет! 👋\n"
+        "Хочешь совместное фото со знаменитостью? 🕺\n"
+        "Отправь своё фото первым, а потом фото знаменитости — и я их объединю!"
     )
     user_photos[update.message.from_user.id] = []
 
-# Функция обработки фото
 def handle_photo(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
-
-    # Инициализация списка фото для пользователя
     if user_id not in user_photos:
         user_photos[user_id] = []
 
-    # Добавляем фото в список
     photo_file = update.message.photo[-1].get_file()
     bio = BytesIO()
     photo_file.download(out=bio)
     bio.seek(0)
     user_photos[user_id].append(Image.open(bio))
 
-    # Если пользователь отправил два фото, объединяем их
     if len(user_photos[user_id]) == 2:
         img1, img2 = user_photos[user_id]
 
-        # Приводим изображения к одинаковому размеру
-        max_width = max(img1.width, img2.width)
-        max_height = max(img1.height, img2.height)
-        img1 = img1.resize((max_width, max_height))
-        img2 = img2.resize((max_width, max_height))
+        # Подгоняем размер под одинаковую высоту
+        img1 = img1.resize((512, 512))
+        img2 = img2.resize((512, 512))
 
-        # Объединяем изображения по горизонтали
-        combined = Image.new('RGB', (max_width*2, max_height))
-        combined.paste(img1, (0,0))
-        combined.paste(img2, (max_width,0))
+        # Соединяем горизонтально
+        combined = Image.new("RGB", (1024, 512))
+        combined.paste(img1, (0, 0))
+        combined.paste(img2, (512, 0))
 
-        # Отправляем пользователю
+        # Сохраняем и отправляем
         output = BytesIO()
-        output.name = 'celebrity_photo.jpg'
-        combined.save(output, format='JPEG', quality=95)  # сохраняем с хорошим качеством
+        output.name = "combined.jpg"
+        combined.save(output, "JPEG", quality=95)
         output.seek(0)
-        update.message.reply_photo(photo=output)
+        update.message.reply_photo(photo=output, caption="Вот ваша совместная фотография 🌟")
 
-        # Очищаем список для следующей попытки
         user_photos[user_id] = []
     else:
-        update.message.reply_text("Отлично! Теперь отправь второе фото (например, фото знаменитости).")
+        update.message.reply_text("Фото получено! Теперь отправь второе (например, со знаменитостью).")
 
-# Обработка ошибок
 def error(update: Update, context: CallbackContext):
-    logger.warning(f'Update {update} caused error {context.error}')
+    logger.warning(f"Update {update} caused error {context.error}")
 
-# Основная функция
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
-
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(MessageHandler(Filters.photo, handle_photo))
     dp.add_error_handler(error)
-
     updater.start_polling()
     updater.idle()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
