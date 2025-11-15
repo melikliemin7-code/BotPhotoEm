@@ -83,7 +83,7 @@ def handle_photo(update: Update, context: CallbackContext):
 
 # ---- MAIN ----
 def main():
-    TOKEN = os.getenv("BOT_TOKEN")
+    TOKEN = "8595542723:AAEfKKM1sRAI0ZrdXQy8sadMfg7_BQalFBc"
 
     updater = Updater(TOKEN)
     dp = updater.dispatcher
