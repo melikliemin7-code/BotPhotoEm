@@ -1,71 +1,100 @@
-import os
 import logging
+from telegram.ext import Updater, MessageHandler, Filters, CommandHandler
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import CallbackContext
 from PIL import Image
-from io import BytesIO
+import os
 
-# Безопасно: токен берётся из переменных окружения (а не хранится в коде)
-TOKEN = os.getenv("TOKEN")
-
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+logging.basicConfig(level=logging.INFO)
 user_photos = {}
 
+# ---- START ----
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
         "Привет! 👋\n"
-        "Хочешь совместное фото со знаменитостью? 🕺\n"
-        "Отправь своё фото первым, а потом фото знаменитости — и я их объединю!"
+        "Хочешь сделать совместное фото со знаменитостью?\n\n"
+        "Отправь мне две фотографии подряд:\n"
+        "1️⃣ Твоя фотография\n"
+        "2️⃣ Фото знаменитости\n\n"
+        "Я аккуратно соединю их в одно изображение и пришлю результат! 😎📸"
     )
-    user_photos[update.message.from_user.id] = []
 
+# ---- RESET ----
+def reset(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    user_photos[user_id] = []
+    update.message.reply_text("Готово! Отправь две новые фотографии 😊")
+
+# ---- ОБРАБОТКА ФОТО ----
 def handle_photo(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
+
     if user_id not in user_photos:
         user_photos[user_id] = []
 
-    photo_file = update.message.photo[-1].get_file()
-    bio = BytesIO()
-    photo_file.download(out=bio)
-    bio.seek(0)
-    user_photos[user_id].append(Image.open(bio))
+    # Скачать фото
+    file = update.message.photo[-1].get_file()
+    file_path = f"{user_id}_{len(user_photos[user_id])}.jpg"
+    file.download(file_path)
 
+    user_photos[user_id].append(file_path)
+
+    # Если фото одно — ждём второе
+    if len(user_photos[user_id]) == 1:
+        update.message.reply_text("Отлично! Теперь отправь вторую фотографию 📸")
+        return
+
+    # Если два фото — объединяем
     if len(user_photos[user_id]) == 2:
-        img1, img2 = user_photos[user_id]
+        try:
+            img1 = Image.open(user_photos[user_id][0])
+            img2 = Image.open(user_photos[user_id][1])
 
-        # Подгоняем размер под одинаковую высоту
-        img1 = img1.resize((512, 512))
-        img2 = img2.resize((512, 512))
+            # Выравнивание по высоте
+            h = min(img1.height, img2.height)
+            img1 = img1.resize((int(img1.width * h / img1.height), h))
+            img2 = img2.resize((int(img2.width * h / img2.height), h))
 
-        # Соединяем горизонтально
-        combined = Image.new("RGB", (1024, 512))
-        combined.paste(img1, (0, 0))
-        combined.paste(img2, (512, 0))
+            # Создание общей картинки
+            combined_width = img1.width + img2.width
+            result = Image.new("RGB", (combined_width, h))
+            result.paste(img1, (0, 0))
+            result.paste(img2, (img1.width, 0))
 
-        # Сохраняем и отправляем
-        output = BytesIO()
-        output.name = "combined.jpg"
-        combined.save(output, "JPEG", quality=95)
-        output.seek(0)
-        update.message.reply_photo(photo=output, caption="Вот ваша совместная фотография 🌟")
+            output_path = f"{user_id}_result.jpg"
+            result.save(output_path, quality=95)
+
+            # Отправка пользователю
+            update.message.reply_photo(photo=open(output_path, "rb"))
+
+        except Exception as e:
+            update.message.reply_text("Произошла ошибка при обработке фото 😔")
+            print(e)
+
+        # Удаляем временные файлы
+        for f in user_photos[user_id]:
+            if os.path.exists(f):
+                os.remove(f)
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
         user_photos[user_id] = []
-    else:
-        update.message.reply_text("Фото получено! Теперь отправь второе (например, со знаменитостью).")
 
-def error(update: Update, context: CallbackContext):
-    logger.warning(f"Update {update} caused error {context.error}")
 
+# ---- MAIN ----
 def main():
-    updater = Updater(TOKEN, use_context=True)
+    TOKEN = os.getenv("BOT_TOKEN")
+
+    updater = Updater(TOKEN)
     dp = updater.dispatcher
+
     dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("reset", reset))
     dp.add_handler(MessageHandler(Filters.photo, handle_photo))
-    dp.add_error_handler(error)
+
     updater.start_polling()
     updater.idle()
+
 
 if __name__ == "__main__":
     main()
